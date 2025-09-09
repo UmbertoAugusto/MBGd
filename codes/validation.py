@@ -26,7 +26,7 @@ for i in range(1,6):
         continue
     folds_train += str(i)
 train_data = f"train{folds_train}_{args.object}"
-test_data = f"test{args.test_fold}_{args.object}"
+val_data = f"val{args.val_fold}_{args.object}"
 
 # Initialize Yaml general configuration
 with open(args.config_file, 'r') as f:
@@ -45,7 +45,7 @@ model_config = config['MODELS'][model_name]
 # Set model parameters
 cfg.merge_from_file(model_config['_BASE_'])
 cfg.DATASETS.TRAIN = (f"mbg_{train_data.lower()}",)
-cfg.DATASETS.VAL = (f"mbg_{test_data.lower()}",)
+cfg.DATASETS.VAL = (f"mbg_{val_data.lower()}",)
 cfg.OUTPUT_DIR = config['TEST']['OUTPUT_DIR']
 cfg.OUTPUT_DIR = os.path.join(cfg.OUTPUT_DIR, f'train{folds_train}_val{args.val_fold}_test{args.test_fold}_{args.object}')
 os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
@@ -92,53 +92,60 @@ def init_res_dict():
 
 res = init_res_dict()
 
-#getting best conf_score from validation run
-val_results_dir = os.path.dirname(cfg.MODEL.WEIGHTS)
-name_base = f'val_results_{args.object}_train{folds_train}_val{args.val_fold}_test{args.test_fold}'
-val_results_path = os.path.join(val_results_dir, name_base + '.csv')
-df = pd.read_csv(val_results_path)
-score = df['score'].iloc[0]
+scores = np.arange(0.1, 1, 0.02).tolist()
 
-print(f'EVALUATION USING THE BEST SCORE FROM VALIDATION = ({score})')
+best_score = None
+best_f1 = -1
 
-cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = score
+for score in scores:
+    print(f'EVALUATION USING SCORE = {score}')
 
-trainer = DefaultTrainer(cfg)
-#trainer = DefaultTrainer(cfg)
-trainer.resume_or_load(resume=False)
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = score
 
-val_loader = build_detection_test_loader(cfg, f"mbg_{test_data.lower()}")
-evaluator = COCOEvaluator(f"mbg_{test_data.lower()}",
-                          cfg,
-                          False,
-                          output_dir=os.path.join(cfg.OUTPUT_DIR, f"mbg_{test_data.lower()}"))
-cfn_mat = CfnMat(f"mbg_{test_data.lower()}", output_dir=cfg.OUTPUT_DIR)
+    trainer = DefaultTrainer(cfg)
+    #trainer = DefaultTrainer(cfg)
+    trainer.resume_or_load(resume=False)
 
-results = inference_on_dataset(trainer.model,
-                               val_loader,
-                               DatasetEvaluators([evaluator, cfn_mat]),
-                               )
+    val_loader = build_detection_test_loader(cfg, f"mbg_{val_data.lower()}")
+    evaluator = COCOEvaluator(f"mbg_{val_data.lower()}",
+                              cfg,
+                              False,
+                              output_dir=os.path.join(cfg.OUTPUT_DIR, f"mbg_{val_data.lower()}"))
+    cfn_mat = CfnMat(f"mbg_{val_data.lower()}", output_dir=cfg.OUTPUT_DIR)
 
-pr = results['tp'] / (results['tp'] + results['fp'] + 1e-16)
-rc = results['tp'] / (results['tp'] + results['fn'] + 1e-16)
-f1 = (2 * pr * rc) / (pr + rc + 1e-16)
+    results = inference_on_dataset(
+        trainer.model,
+        val_loader,
+        DatasetEvaluators([evaluator, cfn_mat]),
+    )
 
-res['score'].append(score)
-res['TP'].append(results['tp'])
-res['FP'].append(results['fp'])
-res['FN'].append(results['fn'])
-res['AP50'].append(results['bbox']['AP50'])
-res['Pr'].append(pr)
-res['Rc'].append(rc)
-res['F1'].append(f1)
+    pr = results['tp'] / (results['tp'] + results['fp'] + 1e-16)
+    rc = results['tp'] / (results['tp'] + results['fn'] + 1e-16)
+    f1 = (2 * pr * rc) / (pr + rc + 1e-16)
 
+    res['score'].append(score)
+    res['TP'].append(results['tp'])
+    res['FP'].append(results['fp'])
+    res['FN'].append(results['fn'])
+    res['AP50'].append(results['bbox']['AP50'])
+    res['Pr'].append(pr)
+    res['Rc'].append(rc)
+    res['F1'].append(f1)
+
+    # Update best score if current score has a higher F1 or if it ties F1 but has a higher score
+    if f1 > best_f1 or (f1 == best_f1 and score > best_score):
+        best_f1 = f1
+        best_score = score
 
 # Create DataFrame from results
-df_results = pd.DataFrame(res)
+df = pd.DataFrame(res)
+
+# Filter results for the best score
+best_results = df[df['score'] == best_score]
 
 # Save filtered results to CSV
 save_results_dir = os.path.dirname(cfg.MODEL.WEIGHTS)
-name_base = f'test_results_{args.object}_train{folds_train}_val{args.val_fold}_test{args.test_fold}'
-df_results.to_csv(os.path.join(save_results_dir, name_base + '.csv'), index=False)
+name_base = f'val_results_{args.object}_train{folds_train}_val{args.val_fold}_test{args.test_fold}'
+best_results.to_csv(os.path.join(save_results_dir, name_base + '.csv'), index=False)
 
-print(f"Results saved for the best score (F1 = {f1}, score = {score})")
+print(f"Results saved for the best score (F1 = {best_f1}, score = {best_score})")

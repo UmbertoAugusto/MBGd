@@ -17,14 +17,19 @@ logger = logging.getLogger("lm")
 # Argument parser
 parser = argparse.ArgumentParser(description="MBG Training")
 parser.add_argument("--config-file", default="config.yaml", metavar="FILE", help="path to the general config file")
-parser.add_argument("--data-train", default=None, metavar="FILE", help="path to data")
-parser.add_argument("--data-val", default=None, metavar="FILE", help="path to data")
+parser.add_argument("--test-fold", default=None, type=int, help="path to data")
+parser.add_argument("--val-fold", default=None, type=int, help="path to data")
+parser.add_argument("--object", default=None, type=str, help="object to be used")
 args = parser.parse_args()
 
-# Extract fold index from data_train argument
-fold_index = args.data_train.split('_')[1][-1]
-obj_index = args.data_train.split('_')[-1]
-fold_index = f"fold{fold_index}_{obj_index}"
+# Naming datasets
+folds_train = ''
+for i in range(1,6):
+    if i == args.val_fold or i == args.test_fold:
+        continue
+    folds_train += str(i)
+train_data = f"train{folds_train}_{args.object}"
+val_data = f"val{args.val_fold}_{args.object}"
 
 # Initialize Detectron2 configuration
 cfg = get_cfg()
@@ -39,8 +44,8 @@ model_config = config['MODELS'][model_name]
 
 # Apply model-specific configurations
 cfg.merge_from_file(model_config['_BASE_'])
-cfg.DATASETS.TRAIN = (args.data_train,)
-cfg.DATASETS.VAL = (args.data_val,)
+cfg.DATASETS.TRAIN = (f"mbg_{train_data.lower()}",)
+cfg.DATASETS.VAL = (f"mbg_{val_data.lower()}",)
 cfg.MODEL.WEIGHTS = model_config['MODEL']['WEIGHTS']
 cfg.MODEL.MASK_ON = model_config['MODEL']['MASK_ON']
 cfg.MODEL.RESNETS.DEPTH = model_config['MODEL']['RESNETS']['DEPTH']
@@ -70,12 +75,12 @@ cfg.AUGMENTATION = config['AUGMENTATION'].get('ENABLE')
 
 # Define output directory
 cfg.OUTPUT_DIR = config['TEST']['OUTPUT_DIR']
-cfg.OUTPUT_DIR = os.path.join(cfg.OUTPUT_DIR, fold_index)
+cfg.OUTPUT_DIR = os.path.join(cfg.OUTPUT_DIR, f'train{folds_train}_val{args.val_fold}_test{args.test_fold}')
 os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
 setup_logger(cfg.OUTPUT_DIR)
 
 # Register datasets using the parameters from JSON
-register_mosquitoes()
+register_mosquitoes(fold_val=args.val_fold,fold_test=args.test_fold)
 
 # Save the final configuration to a file
 with open(os.path.join(cfg.OUTPUT_DIR, "training_config.yaml"), "w") as f:

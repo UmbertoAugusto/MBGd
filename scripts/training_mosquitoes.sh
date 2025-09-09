@@ -11,7 +11,6 @@ cat << "EOF"
                              
 EOF
 echo " --- Welcome to MBGd workflow ! ---"
-echo " content creator: Isabelle Rodrigues Vaz de Melo "
 
 # Load configurations from config.yaml
 CONFIG_FILE="configs/config.yaml"
@@ -35,18 +34,36 @@ CUDA_DEVICE=$($YQ_LOCAL e '.TRAINING.CUDA_DEVICE // 0' $CONFIG_FILE)
 # START MOSQUITOES WORKFLOW
 echo "Starting training workflow for ${OBJ} detection, ${FOLDS} folds."
 
-for ((fold=0; fold<FOLDS; fold++)); do
-    data_train="mbg_train${fold}_${OBJ}"
-    data_val="mbg_val${fold}_${OBJ}"
+for ((outer_fold=1; outer_fold<=FOLDS; outer_fold++)); do 
 
-    #echo "Running train.py for fold $fold..."
-    CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python codes/train.py --config-file $CONFIG_FILE --data-train "$data_train" --data-val "$data_val"
+    for ((inner_fold=1; inner_fold<=FOLDS; inner_fold++)); do
+        if (( inner_fold == outer_fold )); then
+            continue
+        fi
+
+        echo ""
+        echo "Current date and time: $(date +"%Y-%m-%d %H:%M:%S")"
+        duration=$SECONDS
+        echo "Time spent: $((duration / 3600)) hours, $(((duration / 60) % 60)) minutes and $((duration % 60)) seconds"
+        echo ""
+
+        echo "Running train.py with fold $inner_fold for validation and fold $outer_fold for test..."
+        CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python codes/train.py --config-file $CONFIG_FILE --test-fold "$outer_fold" --val-fold "$inner_fold" --object "$OBJ"
     
-    echo "Running test.py for fold $fold..."
-    CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python codes/test.py --config-file $CONFIG_FILE --data-train "$data_train" --data-val "$data_val"
+        echo "Running validation.py with fold $inner_fold for validation and fold $outer_fold for test..."
+        CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python codes/validation.py --config-file $CONFIG_FILE --test-fold "$outer_fold" --val-fold "$inner_fold" --object "$OBJ"
+
+        echo "Running test.py with fold $inner_fold for validation and fold $outer_fold for test..."
+        CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python codes/test.py --config-file $CONFIG_FILE --test-fold "$outer_fold" --val-fold "$inner_fold" --object "$OBJ"
+
+    done
 done
 
 # FINISH MOSQUITOES WORKFLOW
+echo ""
+echo "Current date and time: $(date +"%Y-%m-%d %H:%M:%S")"
+duration=$SECONDS
+echo "Time spent: $((duration / 3600)) hours, $(((duration / 60) % 60)) minutes and $((duration % 60)) seconds"
+echo ""
+
 echo "Training workflow completed."
-
-

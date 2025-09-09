@@ -17,13 +17,19 @@ OBJECTS = config['REGISTER_DATASETS']['OBJECTS']
 def register_datasets(dataset_names, json_dir, img_root):
 
     for d in dataset_names:
-        register_coco_instances(f"mbg_{d.lower()}",{},os.path.join(json_dir, f"coco_format_{d}.json"),img_root,)
+        register_coco_instances(f"mbg_{d.lower()}",{},os.path.join(json_dir, f"coco_format_{d}.json"),img_root,) #coco_format_train123_tire.json eh o dataset mbg_train123_tire
         cdc_metadata = MetadataCatalog.get(f"mbg_{d.lower()}")
         
-def register_mosquitoes():
+def register_mosquitoes(fold_val,fold_test):
 
-    sets = [f"train{n}" for n in np.arange(FOLDS)]
-    sets += [f"val{n}" for n in np.arange(FOLDS)]
+    folds_train = ''
+    for i in range(1,6):
+        if i == fold_val or i == fold_test:
+            continue
+        folds_train += str(i)
+    sets = [f"train{folds_train}"]
+    sets += [f"val{fold_val}"]
+    sets += [f"test{fold_test}"]
 
     comb = list(product(sets, OBJECTS))
 
@@ -32,4 +38,4 @@ def register_mosquitoes():
     register_datasets(sets, JSON_PATH, FRAMES_PATH)
 
 if __name__ == "__main__":
-    register_mosquitoes()
+    register_mosquitoes(fold_val=1,fold_test=5)
