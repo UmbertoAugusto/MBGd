@@ -36,7 +36,7 @@ echo "Starting training workflow for ${OBJ} detection, ${FOLDS} folds."
 
 for ((outer_fold=1; outer_fold<=FOLDS; outer_fold++)); do 
 
-    for ((inner_fold=1; inner_fold<=FOLDS; inner_fold++)); do
+    for ((inner_fold=1; inner_fold<=5; inner_fold++)); do
         if (( inner_fold == outer_fold )); then
             continue
         fi
