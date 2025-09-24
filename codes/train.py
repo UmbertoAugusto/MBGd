@@ -75,7 +75,7 @@ cfg.AUGMENTATION = config['AUGMENTATION'].get('ENABLE')
 
 # Define output directory
 cfg.OUTPUT_DIR = config['TEST']['OUTPUT_DIR']
-cfg.OUTPUT_DIR = os.path.join(cfg.OUTPUT_DIR, f'train{folds_train}_val{args.val_fold}_test{args.test_fold}')
+cfg.OUTPUT_DIR = os.path.join(cfg.OUTPUT_DIR, f'train{folds_train}_val{args.val_fold}_test{args.test_fold}_{args.object}')
 os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
 setup_logger(cfg.OUTPUT_DIR)
 
