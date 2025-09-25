@@ -47,6 +47,7 @@ cfg.merge_from_file(model_config['_BASE_'])
 cfg.DATASETS.TRAIN = (f"mbg_{train_data.lower()}",)
 cfg.DATASETS.VAL = (f"mbg_{test_data.lower()}",)
 cfg.OUTPUT_DIR = config['TEST']['OUTPUT_DIR']
+save_results_dir = cfg.OUTPUT_DIR
 cfg.OUTPUT_DIR = os.path.join(cfg.OUTPUT_DIR, f'train{folds_train}_val{args.val_fold}_test{args.test_fold}_{args.object}')
 os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
 setup_logger(cfg.OUTPUT_DIR)
@@ -80,12 +81,14 @@ cfg.MODEL.WEIGHTS = os.path.join(cfg.OUTPUT_DIR, config['TEST']['TEST_WEIGHTS'])
 def init_res_dict():
     '''iniciates a dictionary to store results metrics'''
     return {
-        'score': [],
+        'fold_test': [],
+        'fold_val': [],
+        'conf_score': [],
         'TP': [],
         'FP': [],
         'FN': [],
-        'Pr': [],
-        'Rc': [],
+        'Precision': [],
+        'Recall': [],
         'F1': [],
         'AP50': [],
     }
@@ -97,7 +100,7 @@ val_results_dir = os.path.dirname(cfg.MODEL.WEIGHTS)
 name_base = f'val_results_{args.object}_train{folds_train}_val{args.val_fold}_test{args.test_fold}'
 val_results_path = os.path.join(val_results_dir, name_base + '.csv')
 df = pd.read_csv(val_results_path)
-score = df['score'].iloc[0]
+score = float(df['score'].iloc[0])
 
 print(f'EVALUATION USING THE BEST SCORE FROM VALIDATION = ({score})')
 
@@ -123,13 +126,15 @@ pr = results['tp'] / (results['tp'] + results['fp'] + 1e-16)
 rc = results['tp'] / (results['tp'] + results['fn'] + 1e-16)
 f1 = (2 * pr * rc) / (pr + rc + 1e-16)
 
-res['score'].append(score)
+res['fold_test'].append(args.test_fold)
+res['fold_val'].append(args.val_fold)
+res['conf_score'].append(score)
 res['TP'].append(results['tp'])
 res['FP'].append(results['fp'])
 res['FN'].append(results['fn'])
 res['AP50'].append(results['bbox']['AP50'])
-res['Pr'].append(pr)
-res['Rc'].append(rc)
+res['Precision'].append(pr)
+res['Recall'].append(rc)
 res['F1'].append(f1)
 
 
@@ -137,8 +142,14 @@ res['F1'].append(f1)
 df_results = pd.DataFrame(res)
 
 # Save filtered results to CSV
-save_results_dir = os.path.dirname(cfg.MODEL.WEIGHTS)
-name_base = f'test_results_{args.object}_train{folds_train}_val{args.val_fold}_test{args.test_fold}'
-df_results.to_csv(os.path.join(save_results_dir, name_base + '.csv'), index=False)
+name_base = 'test_results'
+output_file = os.path.join(save_results_dir, name_base + '.csv')
+
+if not os.path.exists(output_file):
+    # Add header if file does not exist yet
+    df_results.to_csv(output_file, mode='w', header=True, index=False)
+else:
+    # Add just results
+    df_results.to_csv(output_file, mode='a', header=False, index=False)
 
 print(f"Results saved for the best score (F1 = {f1}, score = {score})")
