@@ -10,6 +10,7 @@ from evaluation import CfnMat
 from register_dataset import register_mosquitoes
 import numpy as np
 import yaml
+from post_processing import PostProcessingTiledImages
 
 # Argument parser
 parser = argparse.ArgumentParser(description="MBG Training")
@@ -17,6 +18,7 @@ parser.add_argument("--config-file", default="config.yaml", metavar="FILE", help
 parser.add_argument("--test-fold", default=None, type=int, help="path to data")
 parser.add_argument("--val-fold", default=None, type=int, help="path to data")
 parser.add_argument("--object", default=None, type=str, help="object to be used")
+parser.add_argument("--datatype", default=None, type=str, help="tiled or integer")
 args = parser.parse_args()
 
 # Naming datasets
@@ -37,6 +39,9 @@ cfg = get_cfg()
 
 # Register datasets using the parameters from JSON
 register_mosquitoes(fold_val=args.val_fold,fold_test=args.test_fold)
+
+#get original anotatios directory path (to be used in post processing for tiled images)
+original_json_path = config['REGISTER_DATASETS']['JSON_PATH']
 
 # Access the specific model configuration
 model_name = (config['TRAINING']['MODEL_NAME']).upper()
@@ -122,21 +127,42 @@ results = inference_on_dataset(trainer.model,
                                DatasetEvaluators([evaluator, cfn_mat]),
                                )
 
-pr = results['tp'] / (results['tp'] + results['fp'] + 1e-16)
-rc = results['tp'] / (results['tp'] + results['fn'] + 1e-16)
-f1 = (2 * pr * rc) / (pr + rc + 1e-16)
+if args.datatype.lower() == "integer":
+    pr = results['tp'] / (results['tp'] + results['fp'] + 1e-16)
+    rc = results['tp'] / (results['tp'] + results['fn'] + 1e-16)
+    f1 = (2 * pr * rc) / (pr + rc + 1e-16)
 
-res['fold_test'].append(args.test_fold)
-res['fold_val'].append(args.val_fold)
-res['conf_score'].append(score)
-res['TP'].append(results['tp'])
-res['FP'].append(results['fp'])
-res['FN'].append(results['fn'])
-res['AP50'].append(results['bbox']['AP50'])
-res['Precision'].append(pr)
-res['Recall'].append(rc)
-res['F1'].append(f1)
+    res['fold_test'].append(args.test_fold)
+    res['fold_val'].append(args.val_fold)
+    res['conf_score'].append(score)
+    res['TP'].append(results['tp'])
+    res['FP'].append(results['fp'])
+    res['FN'].append(results['fn'])
+    res['AP50'].append(results['bbox']['AP50'])
+    res['Precision'].append(pr)
+    res['Recall'].append(rc)
+    res['F1'].append(f1)
 
+elif args.datatype.lower() == "tiled":
+    evaluator_output_dir = os.path.join(cfg.OUTPUT_DIR, f"mbg_{test_data.lower()}")
+    json_path_predicoes = os.path.join(evaluator_output_dir, "coco_instances_results.json")
+    json_path_original = os.path.join(original_json_path, f'coco_format_test{args.test_fold}_{args.object}.json')
+    results = PostProcessingTiledImages(
+                        pred_json_path = json_path_predicoes,
+                        original_annotations_json_path = json_path_original,
+                        confidence_threshold = score)
+        
+    f1 = results['F1']
+    res['fold_test'].append(args.test_fold)
+    res['fold_val'].append(args.val_fold)
+    res['conf_score'].append(score)
+    res['TP'].append(results['TP'])
+    res['FP'].append(results['FP'])
+    res['FN'].append(results['FN'])
+    res['AP50'].append('-')
+    res['Precision'].append(results['Precision'])
+    res['Recall'].append(results['Recall'])
+    res['F1'].append(results['F1'])
 
 # Create DataFrame from results
 df_results = pd.DataFrame(res)

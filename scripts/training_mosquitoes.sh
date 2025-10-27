@@ -28,6 +28,7 @@ fi
 # Extract values from config.yaml usando yq local
 OBJ=$($YQ_LOCAL e '.TRAINING.OBJECT' $CONFIG_FILE)
 FOLDS=$($YQ_LOCAL e '.REGISTER_DATASETS.FOLDS' $CONFIG_FILE)
+DATATYPE=$($YQ_LOCAL e '.REGISTER_DATASETS.DATATYPE' $CONFIG_FILE)
 MAX_ITER=$($YQ_LOCAL e '.TRAINING.MAX_ITER' $CONFIG_FILE)
 CUDA_DEVICE=$($YQ_LOCAL e '.TRAINING.CUDA_DEVICE // 0' $CONFIG_FILE)
 
@@ -51,10 +52,10 @@ for ((outer_fold=1; outer_fold<=FOLDS; outer_fold++)); do
         CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python codes/train.py --config-file $CONFIG_FILE --test-fold "$outer_fold" --val-fold "$inner_fold" --object "$OBJ"
     
         echo "Running validation.py with fold $inner_fold for validation and fold $outer_fold for test..."
-        CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python codes/validation.py --config-file $CONFIG_FILE --test-fold "$outer_fold" --val-fold "$inner_fold" --object "$OBJ"
+        CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python codes/validation.py --config-file $CONFIG_FILE --test-fold "$outer_fold" --val-fold "$inner_fold" --object "$OBJ" --datatype "$DATATYPE"
 
         echo "Running test.py with fold $inner_fold for validation and fold $outer_fold for test..."
-        CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python codes/test.py --config-file $CONFIG_FILE --test-fold "$outer_fold" --val-fold "$inner_fold" --object "$OBJ"
+        CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python codes/test.py --config-file $CONFIG_FILE --test-fold "$outer_fold" --val-fold "$inner_fold" --object "$OBJ" --datatype "$DATATYPE"
 
     done
 done

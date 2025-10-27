@@ -1,7 +1,7 @@
 MODELS:
   FASTER_RCNN_R_50_FPN_1X:
     # Change _BASE_ path to your own path (/home/<user>/Mosquitoes/<pasta_experimento>/configs/faster_rcnn_R_50_FPN_1X/Base-RCNN-FPN.yaml)
-    _BASE_: "/home/umberto.pereira/Mosquitoes/MBGd/configs/Base-RCNN-FPN.yaml"
+    _BASE_: "/nfs/proc/projeto.dpcm/Umberto/Faster/configs/Base-RCNN-FPN.yaml"
     MODEL:
       WEIGHTS: "detectron2://COCO-Detection/faster_rcnn_R_50_FPN_1x/137257794/model_final_b275ba.pkl"
       MASK_ON: False # True or False
@@ -22,14 +22,15 @@ MODELS:
         NUM_CLASSES: 1
 REGISTER_DATASETS:
   # Change JSON_PATH tp your own path (/home/<user>/Mosquitoes/dataset/v2/coco_json_folds)
-  JSON_PATH: "/nfs/proc/projeto.dpcm/resized_images/watertank/coco_json_watertank" # Path to COCO JSON files
+  JSON_PATH: "/nfs/proc/projeto.dpcm/mbgv2a/tiles/tire/coco_json_tire_tiled" # Path to COCO JSON files
   # Change FRAMES_PATH to your own path (/home/<user>/Mosquitoes/dataset/v2/frames)
-  FRAMES_PATH: "/nfs/proc/projeto.dpcm/resized_images/watertank" # Path to dir /images where frames are
+  FRAMES_PATH: "/nfs/proc/projeto.dpcm/mbgv2a/tiles/tire/images" # Path to dir /images where frames are
   ### The commands are suited for tires, if you want to detect watertanks, then do:
   # JSON_PATH = "/home/<user>/Mosquitoes/dataset/v2/watertanks"
   # FRAMES_PATH = "/home/<user>/Mosquitoes/dataset/v2/frames"
   FOLDS: 5
-  OBJECTS: ["watertank"] # ["tire", "watertank"]
+  OBJECTS: ["tire"] # ["tire", "watertank"]
+  DATATYPE: "tiled" #"integer" or "tiled"
 TRAINING:
   VAL_PERIOD: 1
   TRAINING_NUM_WORKERS: 4
@@ -43,10 +44,10 @@ TRAINING:
   STEPS: [] # [initial_step, final_step]
   CUDA_DEVICE: 0
   MODEL_NAME: 'faster_rcnn_R_50_FPN_1x'
-  OBJECT: 'watertank' # 'tire', 'watertank'
+  OBJECT: 'tire' # 'tire', 'watertank'
 TEST:
   TEST_WEIGHTS: "model_early_stopping.pth"
-  OUTPUT_DIR: "outputs/faster_rcnn_R_50_FPN_1x/faster_resized_watertanks_5fold" # outputs/model_name/experiment_name
+  OUTPUT_DIR: "outputs/faster_rcnn_R_50_FPN_1x/faster_tiled_tire_5fold" # outputs/model_name/experiment_name
 AUGMENTATION:
   ENABLE: True # True or False
 
