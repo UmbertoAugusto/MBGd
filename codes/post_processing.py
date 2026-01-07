@@ -8,17 +8,22 @@ from torchvision.ops import nms
 
 # --- FUNÇÕES AUXILIARES ---
 
+# --- Parâmetros ---
+#valores usados para pneus:
+TILE_SIZE = 640
+OVERLAP_RATIO = 0.067 #para pneus eh 0.067
+NUM_COLUMNS = 7
+NUM_ROWS = 4
+OVERLAP_PIXELS = int(TILE_SIZE * OVERLAP_RATIO)
+
+NMS_MATCH_THRESHOLD = 0.5 # acima disso eh considerado previsao duplicada e so fica uma
+# ------------------------------------
+
 def parse_custom_filename_and_calculate_shift(filename_stem):
     """
     Extrai o nome da imagem original e calcula as coordenadas de deslocamento
     a partir de um nome de arquivo no formato 'video_XX_frameYYYY__tileZZZZ'.
     """
-    # --- Parâmetros ---
-    TILE_SIZE = 640
-    OVERLAP_RATIO = 0.067 #para pneus eh 0.067
-    NUM_COLUMNS = 7
-    # ------------------------------------
-
     # 1. Separa o nome original do ID do tile
     # Ex: 'video_10_frame0000__tile0009' -> ('video_10_frame0000', '0009')
     try:
@@ -27,11 +32,10 @@ def parse_custom_filename_and_calculate_shift(filename_stem):
     except ValueError:
         # Fallback para caso o nome do arquivo não siga o padrão esperado
         print(f"Aviso: Não foi possível parsear o nome do arquivo: {filename_stem}")
-        return None, None
+        return None, None, None, None
 
     # 2. Calcula o passo (stride)
-    overlap_pixels = int(TILE_SIZE * OVERLAP_RATIO)
-    step = TILE_SIZE - overlap_pixels  # Ex: 640 - 42 = 598
+    step = TILE_SIZE - OVERLAP_PIXELS  # Ex: 640 - 42 = 598
 
     # 3. Calcula a posição na grade (linha e coluna)
     col = tile_id % NUM_COLUMNS
@@ -42,7 +46,7 @@ def parse_custom_filename_and_calculate_shift(filename_stem):
     shift_y = row * step
     shift_amount = [shift_x, shift_y]
     
-    return original_name, shift_amount
+    return original_name, shift_amount, row, col
 
 def calculate_iou(boxA, boxB):
     """
@@ -67,20 +71,25 @@ def calculate_iou(boxA, boxB):
     return iou
 
 
-# Parâmetros
-NMS_MATCH_THRESHOLD = 0.5 # acima disso eh considerado previsao duplicada e so fica uma
-IOU_THRESHOLD_FOR_MATCH = 0.5 # acima disso previsao eh considerada certa
 
-def PostProcessingTiledImages(pred_json_path, original_annotations_json_path, confidence_threshold):
+def PostProcessingTiledImages(pred_json_path, original_annotations_json_path, tiled_annotations_json_path, confidence_threshold, iou_thresh_tp_fp=0.5):
     # Load json files
-    with open(pred_json_path, 'r') as f:
-        yolo_preds = json.load(f)
+    with open(pred_json_path, 'r') as f: # predicoes
+        faster_preds = json.load(f)
 
-    with open(original_annotations_json_path, 'r') as f:
+    with open(original_annotations_json_path, 'r') as f: # anotacoes nos quadros originais (inteiros)
         original_gt = json.load(f)
 
-    # Criar um mapa de ID para nome de imagem original para facilitar a busca
+    with open(tiled_annotations_json_path, 'r') as f: # anotacoes nos quadros cortados, para relacionar image_id
+        tiled_gt = json.load(f)
+
+    # Mapa: ID Tiled -> Nome do Arquivo Tiled
+    tiled_images_map = {img['id']: img['file_name'] for img in tiled_gt['images']}
+
+    # Mapa: ID Original -> Info da Imagem Original (para iterar depois)
     gt_images_map = {img['id']: img for img in original_gt['images']}
+
+    # Mapa: ID Original -> Anotações (Bbox)
     gt_annotations_map = defaultdict(list)
     for ann in original_gt['annotations']:
         gt_annotations_map[ann['image_id']].append(ann)
@@ -88,13 +97,21 @@ def PostProcessingTiledImages(pred_json_path, original_annotations_json_path, co
     # Read predictions
     raw_preds_per_original_image = defaultdict(list)
 
-    for pred in yolo_preds:
+    for pred in faster_preds:
         if pred['score'] < confidence_threshold:
             continue
             
-        image_id_stem = pred['image_id'] # No YOLO JSON, 'image_id' é o stem do nome do arquivo
+        image_id_int = pred['image_id'] # Na Faster/Detectron, 'image_id' é um int
 
-        original_name, shift_amount = parse_custom_filename_and_calculate_shift(image_id_stem)
+        # Pega nome da imagem com aquele id usando o mapa de anotacoes em tiled frames
+        if image_id_int not in tiled_images_map:
+            print(f"Aviso: ID {image_id_int} não encontrado no Ground Truth.")
+            continue
+
+        full_filename = tiled_images_map[image_id_int]
+        image_id_stem = os.path.splitext(os.path.basename(full_filename))[0]
+
+        original_name, shift_amount, row, col = parse_custom_filename_and_calculate_shift(image_id_stem)
         
         # Se o parse falhar, pula esta predição
         if original_name is None:
@@ -104,7 +121,9 @@ def PostProcessingTiledImages(pred_json_path, original_annotations_json_path, co
             'bbox': pred['bbox'],
             'score': pred['score'],
             'category_id': pred['category_id'],
-            'shift_amount': shift_amount
+            'shift_amount': shift_amount,
+            'row' : row,
+            'col' : col
         })
 
 
@@ -116,15 +135,43 @@ def PostProcessingTiledImages(pred_json_path, original_annotations_json_path, co
         final_preds_for_image = []
 
         # 1. Converte predições brutas para objetos SAHI para facilitar o manuseio
-        sahi_predictions = []
+
+        # separa area que precisa do NMS (sobreposicao) da que nao precisa
+        sahi_predictions_safe = []
+        sahi_predictions_overlap = []
+
         for pred in raw_preds:
             #correcao no formato da bbox
             x_min, y_min, w, h = pred['bbox']
             x_max = x_min + w
             y_max = y_min + h
-            #aplicando deslocamento para correcao nas coordenadas
+            row = pred['row']
+            col = pred['col']
+
+            # --- LÓGICA DE DECISÃO (SAFE vs OVERLAP) ---
+            is_in_overlap = False
+
+            # Checa borda ESQUERDA (só se não for coluna 0)
+            if col > 0 and x_min < OVERLAP_PIXELS:
+                is_in_overlap = True
+            
+            # Checa borda SUPERIOR (só se não for linha 0)
+            if row > 0 and y_min < OVERLAP_PIXELS:
+                is_in_overlap = True
+                
+            # Checa borda DIREITA (só se não for a última coluna)
+            if col < (NUM_COLUMNS - 1) and x_max > (TILE_SIZE - OVERLAP_PIXELS):
+                is_in_overlap = True
+                
+            # Checa borda INFERIOR (só se não for a última linha)
+            if row < (NUM_ROWS - 1) and y_max > (TILE_SIZE - OVERLAP_PIXELS):
+                is_in_overlap = True
+            # --- FIM DA LÓGICA ---
+
+            # aplicando deslocamento para correcao nas coordenadas e criando objeto sahi
             shift_x, shift_y = pred['shift_amount']
             bbox_xyxy = [x_min + shift_x, y_min + shift_y, x_max + shift_x, y_max + shift_y]
+
             sahi_pred = ObjectPrediction(
                 bbox=bbox_xyxy,
                 score=pred['score'],
@@ -132,23 +179,35 @@ def PostProcessingTiledImages(pred_json_path, original_annotations_json_path, co
                 shift_amount=[0, 0],
                 full_shape=None
             )
-            sahi_predictions.append(sahi_pred)
+
+            # Adiciona na lista correta
+            if is_in_overlap:
+                sahi_predictions_overlap.append(sahi_pred)
+            else:
+                sahi_predictions_safe.append(sahi_pred)
             
         # 2. Encontra todas as classes únicas presentes nesta imagem
-        unique_classes = {p.category.id for p in sahi_predictions}
+        all_preds = sahi_predictions_safe + sahi_predictions_overlap
+        unique_classes = {p.category.id for p in all_preds}
 
-        # 3. Aplica o NMS para cada classe separadamente
+        # 3. Aplica o NMS para cada classe separadamente *APENAS* nas previsões da zona de overlap
         for class_id in unique_classes:
             # Filtra as predições para a classe atual
-            class_preds = [p for p in sahi_predictions if p.category.id == class_id]
 
-            if not class_preds:
+            # Pega as previsões SEGURAS para esta classe (elas passam direto)
+            safe_class_preds = [p for p in sahi_predictions_safe if p.category.id == class_id]
+            final_preds_for_image.extend(safe_class_preds)
+
+            # Pega as previsões de OVERLAP para esta classe (estas vão para o NMS)
+            overlap_class_preds = [p for p in sahi_predictions_overlap if p.category.id == class_id]
+
+            if not overlap_class_preds:
                 continue
 
-            # Prepara os dados para a função nms da torchvision
+            # Prepara os dados para a função nms da torchvision (só da lista de overlap)
             # Bounding boxes no formato (x_min, y_min, x_max, y_max)
-            boxes_xyxy = [p.bbox.to_xyxy() for p in class_preds]
-            scores = [p.score.value for p in class_preds]
+            boxes_xyxy = [p.bbox.to_xyxy() for p in overlap_class_preds]
+            scores = [p.score.value for p in overlap_class_preds]
             
             # Converte para tensores do PyTorch
             boxes_tensor = torch.tensor(boxes_xyxy, dtype=torch.float32)
@@ -159,7 +218,7 @@ def PostProcessingTiledImages(pred_json_path, original_annotations_json_path, co
 
             # 5. Guarda as predições que sobreviveram ao NMS
             for index in kept_indices:
-                final_preds_for_image.append(class_preds[index])
+                final_preds_for_image.append(overlap_class_preds[index])
         
         # 6. Converte de volta para o formato simples para a etapa de avaliação
         final_predictions[original_name] = [
@@ -197,7 +256,7 @@ def PostProcessingTiledImages(pred_json_path, original_annotations_json_path, co
                     best_iou = iou
                     best_gt_idx = i
             
-            if best_iou >= IOU_THRESHOLD_FOR_MATCH and not gt_matched[best_gt_idx]:
+            if best_iou >= iou_thresh_tp_fp and not gt_matched[best_gt_idx]:
                 tp += 1
                 gt_matched[best_gt_idx] = True # Marca como "usado"
             else:
@@ -217,6 +276,6 @@ def PostProcessingTiledImages(pred_json_path, original_annotations_json_path, co
     return {'TP':total_tp,'FP':total_fp,'FN':total_fn,'Precision':precision,'Recall':recall,'F1':f1_score}
 
 if __name__ == '__main__':
-    print(PostProcessingTiledImages(pred_json_path='/home/umberto.pereira/data/Umberto/YOLO/outputs/yolo_tiled_tires_1folds/test_fold1/val_fold4/test/predictions.json',
+    print(PostProcessingTiledImages(pred_json_path='/home/umberto.pereira/data/Umberto/YOLO/outputs/yolo_tiled_tires_5folds/test_fold1/val_fold2/test/predictions.json',
                                     original_annotations_json_path='/nfs/proc/projeto.dpcm/mbgv2a/tire/coco_json_tire/coco_format_test1_tire.json',
-                                    confidence_threshold=0.5))
+                                    confidence_threshold=0.78))

@@ -40,8 +40,9 @@ cfg = get_cfg()
 # Register datasets using the parameters from JSON
 register_mosquitoes(fold_val=args.val_fold,fold_test=args.test_fold)
 
-#get original anotatios directory path (to be used in post processing for tiled images)
-original_json_path = config['REGISTER_DATASETS']['JSON_PATH']
+#get anotations directory path (to be used in post processing for tiled images)
+original_json_path = config['REGISTER_DATASETS']['ORIGINAL_INTEGER_JSON_PATH'] # annotations from integer frames
+tiled_json_path = config['REGISTER_DATASETS']['JSON_PATH'] # for tiled frames
 
 # Access the specific model configuration
 model_name = (config['TRAINING']['MODEL_NAME']).upper()
@@ -83,7 +84,7 @@ cfg.AUGMENTATION = config['AUGMENTATION'].get('ENABLE')
 # Update model weights to the best model found
 cfg.MODEL.WEIGHTS = os.path.join(cfg.OUTPUT_DIR, config['TEST']['TEST_WEIGHTS'])
 
-def init_res_dict():
+def init_res_dict_integer():
     '''iniciates a dictionary to store results metrics'''
     return {
         'fold_test': [],
@@ -98,7 +99,22 @@ def init_res_dict():
         'AP50': [],
     }
 
-res = init_res_dict()
+def init_res_dict_tiled():
+    '''iniciates a dictionary to store results metrics'''
+    return {
+        'fold_test': [],
+        'fold_val': [],
+        'conf_score': [],
+        'decision_iou_threshold': [],
+        'TP': [],
+        'FP': [],
+        'FN': [],
+        'Precision': [],
+        'Recall': [],
+        'F1': [],
+        'AP50': [],
+    }
+
 
 #getting best conf_score from validation run
 val_results_dir = os.path.dirname(cfg.MODEL.WEIGHTS)
@@ -112,7 +128,6 @@ print(f'EVALUATION USING THE BEST SCORE FROM VALIDATION = ({score})')
 cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = score
 
 trainer = DefaultTrainer(cfg)
-#trainer = DefaultTrainer(cfg)
 trainer.resume_or_load(resume=False)
 
 val_loader = build_detection_test_loader(cfg, f"mbg_{test_data.lower()}")
@@ -128,6 +143,8 @@ results = inference_on_dataset(trainer.model,
                                )
 
 if args.datatype.lower() == "integer":
+    res = init_res_dict_integer()
+    
     pr = results['tp'] / (results['tp'] + results['fp'] + 1e-16)
     rc = results['tp'] / (results['tp'] + results['fn'] + 1e-16)
     f1 = (2 * pr * rc) / (pr + rc + 1e-16)
@@ -144,17 +161,25 @@ if args.datatype.lower() == "integer":
     res['F1'].append(f1)
 
 elif args.datatype.lower() == "tiled":
+    res = init_res_dict_tiled()
+    
     evaluator_output_dir = os.path.join(cfg.OUTPUT_DIR, f"mbg_{test_data.lower()}")
+    iou_thresh = float(df['decision_iou_threshold'].iloc[0])
     json_path_predicoes = os.path.join(evaluator_output_dir, "coco_instances_results.json")
     json_path_original = os.path.join(original_json_path, f'coco_format_test{args.test_fold}_{args.object}.json')
+    json_path_tiled = os.path.join(tiled_json_path, f'coco_format_test{args.test_fold}_{args.object}.json')
+
     results = PostProcessingTiledImages(
                         pred_json_path = json_path_predicoes,
                         original_annotations_json_path = json_path_original,
-                        confidence_threshold = score)
+                        tiled_annotations_json_path=json_path_tiled,
+                        confidence_threshold = score,
+                        iou_thresh_tp_fp = iou_thresh)
         
     f1 = results['F1']
     res['fold_test'].append(args.test_fold)
     res['fold_val'].append(args.val_fold)
+    res['decision_iou_threshold'].append(iou_thresh)
     res['conf_score'].append(score)
     res['TP'].append(results['TP'])
     res['FP'].append(results['FP'])

@@ -11,6 +11,9 @@ from register_dataset import register_mosquitoes
 import numpy as np
 import yaml
 from post_processing import PostProcessingTiledImages
+from skopt import gp_minimize
+from skopt.space import Real
+from skopt.utils import use_named_args
 
 # Argument parser
 parser = argparse.ArgumentParser(description="MBG Training")
@@ -40,8 +43,9 @@ cfg = get_cfg()
 # Register datasets using the parameters from JSON
 register_mosquitoes(fold_val=args.val_fold,fold_test=args.test_fold)
 
-#get original anotatios directory path (to be used in post processing for tiled images)
-original_json_path = config['REGISTER_DATASETS']['JSON_PATH']
+#get anotations directory path (to be used in post processing for tiled images)
+original_json_path = config['REGISTER_DATASETS']['ORIGINAL_INTEGER_JSON_PATH'] # annotations from integer frames
+tiled_json_path = config['REGISTER_DATASETS']['JSON_PATH'] # for tiled frames
 
 # Access the specific model configuration
 model_name = (config['TRAINING']['MODEL_NAME']).upper()
@@ -82,7 +86,7 @@ cfg.AUGMENTATION = config['AUGMENTATION'].get('ENABLE')
 # Update model weights to the best model found
 cfg.MODEL.WEIGHTS = os.path.join(cfg.OUTPUT_DIR, config['TEST']['TEST_WEIGHTS'])
 
-def init_res_dict():
+def init_res_dict_integer():
     '''iniciates a dictionary to store results metrics'''
     return {
         'score': [],
@@ -95,36 +99,49 @@ def init_res_dict():
         'AP50': [],
     }
 
-res = init_res_dict()
+def init_res_dict_tiled():
+    '''iniciates a dictionary to store results metrics'''
+    return {
+        'score': [],
+        'decision_iou_threshold': [],
+        'TP': [],
+        'FP': [],
+        'FN': [],
+        'Pr': [],
+        'Rc': [],
+        'F1': [],
+        'AP50': [],
+    }
 
 scores = np.arange(0.1, 1, 0.02).tolist()
 
 best_score = None
 best_f1 = -1
 
-for score in scores:
-    print(f'EVALUATION USING SCORE = {score}')
+if args.datatype.lower() == "integer":
+    res = init_res_dict_integer()
 
-    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = score
+    for score in scores:
+        print(f'EVALUATION USING SCORE = {score}')
 
-    trainer = DefaultTrainer(cfg)
-    #trainer = DefaultTrainer(cfg)
-    trainer.resume_or_load(resume=False)
+        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = score
 
-    val_loader = build_detection_test_loader(cfg, f"mbg_{val_data.lower()}")
-    evaluator = COCOEvaluator(f"mbg_{val_data.lower()}",
-                              cfg,
-                              False,
-                              output_dir=os.path.join(cfg.OUTPUT_DIR, f"mbg_{val_data.lower()}"))
-    cfn_mat = CfnMat(f"mbg_{val_data.lower()}", output_dir=cfg.OUTPUT_DIR)
+        trainer = DefaultTrainer(cfg)
+        #trainer = DefaultTrainer(cfg)
+        trainer.resume_or_load(resume=False)
 
-    results = inference_on_dataset(
-        trainer.model,
-        val_loader,
-        DatasetEvaluators([evaluator, cfn_mat]),
-    )
+        val_loader = build_detection_test_loader(cfg, f"mbg_{val_data.lower()}")
+        evaluator = COCOEvaluator(f"mbg_{val_data.lower()}",
+                                cfg,
+                                False,
+                                output_dir=os.path.join(cfg.OUTPUT_DIR, f"mbg_{val_data.lower()}"))
+        cfn_mat = CfnMat(f"mbg_{val_data.lower()}", output_dir=cfg.OUTPUT_DIR)
 
-    if args.datatype.lower() == "integer":
+        results = inference_on_dataset(
+            trainer.model,
+            val_loader,
+            DatasetEvaluators([evaluator, cfn_mat]),
+        )
 
         pr = results['tp'] / (results['tp'] + results['fp'] + 1e-16)
         rc = results['tp'] / (results['tp'] + results['fn'] + 1e-16)
@@ -138,30 +155,102 @@ for score in scores:
         res['Pr'].append(pr)
         res['Rc'].append(rc)
         res['F1'].append(f1)
-    
-    elif args.datatype.lower() == "tiled":
-        evaluator_output_dir = os.path.join(cfg.OUTPUT_DIR, f"mbg_{val_data.lower()}")
-        json_path_predicoes = os.path.join(evaluator_output_dir, "coco_instances_results.json")
-        json_path_original = os.path.join(original_json_path, f'coco_format_val{args.val_fold}_{args.object}.json')
-        results = PostProcessingTiledImages(
-                            pred_json_path = json_path_predicoes,
-                            original_annotations_json_path = json_path_original,
-                            confidence_threshold = score)
-        
-        f1 = results['F1']
-        res['score'].append(score)
-        res['TP'].append(results['TP'])
-        res['FP'].append(results['FP'])
-        res['FN'].append(results['FN'])
-        res['AP50'].append('-')
-        res['Pr'].append(results['Precision'])
-        res['Rc'].append(results['Recall'])
-        res['F1'].append(results['F1'])
 
     # Update best score if current score has a higher F1 or if it ties F1 but has a higher score
     if f1 > best_f1 or (f1 == best_f1 and score > best_score):
         best_f1 = f1
         best_score = score
+
+# TILED DATASET
+elif args.datatype.lower() == "tiled":
+    res = init_res_dict_tiled()
+
+    # prepare the inference
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.01 #base threshold to find all possible predctions
+    trainer = DefaultTrainer(cfg)
+    trainer.resume_or_load(resume=False)
+
+    evaluator_output_dir = os.path.join(cfg.OUTPUT_DIR, f"mbg_{val_data.lower()}")
+    os.makedirs(evaluator_output_dir, exist_ok=True)
+
+    print(f"Rodando inferência base...")
+
+    # run the inference
+    val_loader = build_detection_test_loader(cfg, f"mbg_{val_data.lower()}")
+    evaluator = COCOEvaluator(f"mbg_{val_data.lower()}",
+                                cfg,
+                                False,
+                                output_dir=os.path.join(cfg.OUTPUT_DIR, f"mbg_{val_data.lower()}"))
+    cfn_mat = CfnMat(f"mbg_{val_data.lower()}", output_dir=cfg.OUTPUT_DIR)
+    inference_on_dataset(trainer.model, val_loader, DatasetEvaluators([evaluator, cfn_mat]))
+
+    # json file paths
+    json_path_predicoes = os.path.join(evaluator_output_dir, "coco_instances_results.json")
+    json_path_original = os.path.join(original_json_path, f'coco_format_val{args.val_fold}_{args.object}.json')
+    json_path_tiled = os.path.join(tiled_json_path, f'coco_format_val{args.val_fold}_{args.object}.json')
+
+    if not os.path.exists(json_path_predicoes):
+        raise FileNotFoundError(f"Erro crítico: O arquivo {json_path_predicoes} não foi gerado.")
+
+    print(f"Inferência base concluída. JSON em: {json_path_predicoes}")
+
+    # configuracao da otimizacao bayesiana
+    space = [
+        Real(0.1, 0.98, name='conf_thresh'), # Espaço de busca para Confiança
+        Real(0.05, 0.9, name='iou_thresh')    # Espaço de busca para IoU (TP/FP)
+    ]
+
+    @use_named_args(space)
+    def objective_function(**params):
+        conf_k = params['conf_thresh']
+        iou_k = params['iou_thresh']
+        
+        # Chama script de pós-processamento
+        # Ele vai filtrar o JSON base pelo conf_k e avaliar usando iou_k
+        results = PostProcessingTiledImages(
+            pred_json_path=json_path_predicoes,
+            original_annotations_json_path=json_path_original,
+            tiled_annotations_json_path=json_path_tiled,
+            confidence_threshold=float(conf_k),
+            iou_thresh_tp_fp=float(iou_k)
+        )
+        
+        f1 = float(results.get('F1', 0.0))
+        
+        # Minimizar o F1 negativo = Maximizar F1
+        return -f1
+
+    print("Rodando Otimização Bayesiana...")
+    resultado_ob = gp_minimize(func=objective_function,
+                                    dimensions=space,
+                                    n_calls=100,
+                                    random_state=42
+                                )
+
+    # get results
+    best_score = resultado_ob.x[0]
+    best_iou_thresh = resultado_ob.x[1]
+    best_f1 = -resultado_ob.fun # Inverte o sinal de volta
+
+    # get metrics from post processing
+    results = PostProcessingTiledImages(
+        pred_json_path=json_path_predicoes,
+        original_annotations_json_path=json_path_original,
+        tiled_annotations_json_path=json_path_tiled,
+        confidence_threshold=float(best_score),
+        iou_thresh_tp_fp=float(best_iou_thresh)
+    )
+        
+    f1 = results['F1']
+    res['score'].append(best_score)
+    res['decision_iou_threshold'].append(best_iou_thresh)
+    res['TP'].append(results['TP'])
+    res['FP'].append(results['FP'])
+    res['FN'].append(results['FN'])
+    res['AP50'].append('-')
+    res['Pr'].append(results['Precision'])
+    res['Rc'].append(results['Recall'])
+    res['F1'].append(results['F1'])
 
 # Create DataFrame from results
 df = pd.DataFrame(res)

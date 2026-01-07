@@ -24,7 +24,9 @@ REGISTER_DATASETS:
   # Change JSON_PATH tp your own path (/home/<user>/Mosquitoes/dataset/v2/coco_json_folds)
   JSON_PATH: "/nfs/proc/projeto.dpcm/mbgv2a/tiles/tire/coco_json_tire_tiled" # Path to COCO JSON files
   # Change FRAMES_PATH to your own path (/home/<user>/Mosquitoes/dataset/v2/frames)
-  FRAMES_PATH: "/nfs/proc/projeto.dpcm/mbgv2a/tiles/tire/images" # Path to dir /images where frames are
+  FRAMES_PATH: "/nfs/proc/projeto.dpcm/mbgv2a/tiles/tire/tire" # Path to dir /images where frames are
+  # ORIGINAL_INTEGER_JSON_PATH is only used if your train in with tiled dataset, it does not matter in the case of training with integer dataset
+  ORIGINAL_INTEGER_JSON_PATH: "/home/umberto.pereira/data/mbgv2a/tire/coco_json_tire"
   ### The commands are suited for tires, if you want to detect watertanks, then do:
   # JSON_PATH = "/home/<user>/Mosquitoes/dataset/v2/watertanks"
   # FRAMES_PATH = "/home/<user>/Mosquitoes/dataset/v2/frames"
