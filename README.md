@@ -83,10 +83,12 @@ Let's discuss what each of these flags mean.
       - `ROI_HEADS`: ROI heads configuration.
         - `NUM_CLASSES`: Number of classes for object detection (e.g., 1 for single class detection).
   - `REGISTER_DATASETS`: Configuration for registering datasets used in the project.
-    - `JSON_PATH`: Path to the directory containing COCO JSON files used for dataset registration.
+    - `JSON_PATH`: Path to the directory containing COCO JSON files used for dataset registration (tiled or integer, which one you are using).
     - `FRAMES_PATH`: Path to the directory containing frame files used for dataset registration.
+    - `ORIGINAL_INTEGER_JSON_PATH`: Path to the directory containing COCO JSON files with annotations for the integer images.
     - `FOLDS`: Number of folds for cross-validation or dataset splitting.
     - `OBJECTS`: List of objects/classes to be registered (e.g., ["tire"]).
+    - `DATATYPE`: "tiled" or "integer"
   - `TRAINING`: Configuration for training the model.
     - `VAL_PERIOD`: Validation period (in epochs) to perform validation during training.
     - `TRAINING_NUM_WORKERS`: Number of worker processes to use for data loading during training.
